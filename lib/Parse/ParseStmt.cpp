@@ -1494,51 +1494,47 @@ ParserResult<Stmt> Parser::parseStmtUnless(LabeledStmtInfo LabelInfo) {
     ParserResult<BraceStmt> NormalBody;
     ParserResult<BraceStmt> EmptyBody;
     
-    // A scope encloses the condition and true branch for any variables bound
-    // by a conditional binding. The else branch does *not* see these variables.
-    {
-        Scope S(this, ScopeKind::IfVars);
-        
-        if (Tok.is(tok::l_brace)) {
-            SourceLoc LBraceLoc = Tok.getLoc();
-            diagnose(UnlessLoc, diag::missing_condition_after_if)
-            .highlight(SourceRange(UnlessLoc, LBraceLoc));
-            SmallVector<StmtConditionElement, 1> ConditionElems;
-            ConditionElems.emplace_back(new (Context) ErrorExpr(LBraceLoc));
-            Condition = Context.AllocateCopy(ConditionElems);
-        } else {
-            Status |= parseStmtCondition(Condition, diag::expected_condition_if,
-                                         StmtKind::If);
-            if (Status.isError() || Status.hasCodeCompletion()) {
-                // FIXME: better recovery
-                return makeParserResult<Stmt>(Status, nullptr);
-            }
+    if (Tok.is(tok::l_brace)) {
+        SourceLoc LBraceLoc = Tok.getLoc();
+        diagnose(UnlessLoc, diag::missing_condition_after_unless)
+        .highlight(SourceRange(UnlessLoc, LBraceLoc));
+        SmallVector<StmtConditionElement, 1> ConditionElems;
+        ConditionElems.emplace_back(new (Context) ErrorExpr(LBraceLoc));
+        Condition = Context.AllocateCopy(ConditionElems);
+    } else {
+        Status |= parseStmtCondition(Condition, diag::expected_condition_unless,
+                                     StmtKind::If);
+        if (Status.isError() || Status.hasCodeCompletion()) {
+            // FIXME: better recovery
+            return makeParserResult<Stmt>(Status, nullptr);
         }
-        
-        
-        // Before parsing the body, disable all of the bound variables so that they
-        // cannot be used unbound.
-        SmallVector<VarDecl *, 4> Vars;
-        for (auto &elt : Condition)
-            if (auto pattern = elt.getPatternOrNull())
-                pattern->collectVariables(Vars);
-        
-        llvm::SaveAndRestore<decltype(DisabledVars)>
-        RestoreCurVars(DisabledVars, Vars);
-        
-        llvm::SaveAndRestore<decltype(DisabledVarReason)>
-        RestoreReason(DisabledVarReason, diag::bound_var_guard_body);
-        
-        NormalBody = parseBraceItemList(diag::expected_lbrace_after_if);
-        if (NormalBody.isNull())
-            return nullptr; // FIXME: better recovery
-        
-        Status |= NormalBody;
-        
-        SmallVector<ASTNode, 16> Entries;
-        EmptyBody = makeParserResult(Status, BraceStmt::create(Context, UnlessLoc, Entries, UnlessLoc));
     }
     
+    // Before parsing the body, disable all of the bound variables so that they
+    // cannot be used unbound.
+    SmallVector<VarDecl *, 4> Vars;
+    for (auto &elt : Condition)
+        if (auto pattern = elt.getPatternOrNull())
+            pattern->collectVariables(Vars);
+    
+    llvm::SaveAndRestore<decltype(DisabledVars)>
+    RestoreCurVars(DisabledVars, Vars);
+    
+    llvm::SaveAndRestore<decltype(DisabledVarReason)>
+    RestoreReason(DisabledVarReason, diag::bound_var_unless_body);
+    
+    // Parse body of the unless statement
+    NormalBody = parseBraceItemList(diag::expected_lbrace_after_unless);
+    if (NormalBody.isNull())
+        return nullptr; // FIXME: better recovery
+    
+    Status |= NormalBody;
+    
+    // Build and empty body, so the IfStmt can be properly initialized
+    SmallVector<ASTNode, 16> Entries;
+    EmptyBody = makeParserResult(Status, BraceStmt::create(Context, UnlessLoc, Entries, UnlessLoc));
+    
+    // Build the IfStmt with the NormalBody and ElseBody reversed to achieve "unless" effect.
     return makeParserResult(
                             Status, new (Context) IfStmt(LabelInfo,
                                                          UnlessLoc, Condition, EmptyBody.get(),

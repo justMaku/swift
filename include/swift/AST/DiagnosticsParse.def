@@ -820,6 +820,16 @@ ERROR(expected_lbrace_after_if,PointsToFirstBadToken,
 ERROR(expected_lbrace_after_else,PointsToFirstBadToken,
       "expected '{' after 'else'", ())
 
+// Unless Statement
+ERROR(bound_var_unless_body,none,
+      "variable declared in 'unless' condition is not usable in its body", ())
+ERROR(expected_condition_unless,PointsToFirstBadToken,
+      "expected expression, var, or let in 'unless' condition", ())
+ERROR(missing_condition_after_unless,none,
+      "missing condition in an 'unless' statement", ())
+ERROR(expected_lbrace_after_unless,PointsToFirstBadToken,
+      "expected '{' after 'unless' condition", ())
+
 // Guard Statement
 ERROR(expected_condition_guard,PointsToFirstBadToken,
       "expected expression, var, let or case in 'guard' condition", ())
