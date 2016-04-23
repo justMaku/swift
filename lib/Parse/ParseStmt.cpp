@@ -35,6 +35,7 @@ bool Parser::isStartOfStmt() {
   case tok::kw_throw:
   case tok::kw_defer:
   case tok::kw_if:
+  case tok::kw_unless:
   case tok::kw_guard:
   case tok::kw_while:
   case tok::kw_do:
@@ -558,6 +559,9 @@ ParserResult<Stmt> Parser::parseStmt() {
     if (LabelInfo) diagnose(LabelInfo.Loc, diag::invalid_label_on_stmt);
     if (tryLoc.isValid()) diagnose(tryLoc, diag::try_on_stmt, Tok.getText());
     return parseStmtDefer();
+  case tok::kw_unless:
+    if (tryLoc.isValid()) diagnose(tryLoc, diag::try_on_stmt, Tok.getText());
+    return parseStmtUnless(LabelInfo);
   case tok::kw_if:
     if (tryLoc.isValid()) diagnose(tryLoc, diag::try_on_stmt, Tok.getText());
     return parseStmtIf(LabelInfo);
@@ -1477,6 +1481,68 @@ ParserStatus Parser::parseStmtCondition(StmtCondition &Condition,
 
   Condition = Context.AllocateCopy(result);
   return Status;
+}
+
+///
+///   stmt-unless:
+///     'unless' condition stmt-brace
+ParserResult<Stmt> Parser::parseStmtUnless(LabeledStmtInfo LabelInfo) {
+    SourceLoc UnlessLoc = consumeToken(tok::kw_unless);
+    
+    ParserStatus Status;
+    StmtCondition Condition;
+    ParserResult<BraceStmt> NormalBody;
+    ParserResult<BraceStmt> EmptyBody;
+    
+    // A scope encloses the condition and true branch for any variables bound
+    // by a conditional binding. The else branch does *not* see these variables.
+    {
+        Scope S(this, ScopeKind::IfVars);
+        
+        if (Tok.is(tok::l_brace)) {
+            SourceLoc LBraceLoc = Tok.getLoc();
+            diagnose(UnlessLoc, diag::missing_condition_after_if)
+            .highlight(SourceRange(UnlessLoc, LBraceLoc));
+            SmallVector<StmtConditionElement, 1> ConditionElems;
+            ConditionElems.emplace_back(new (Context) ErrorExpr(LBraceLoc));
+            Condition = Context.AllocateCopy(ConditionElems);
+        } else {
+            Status |= parseStmtCondition(Condition, diag::expected_condition_if,
+                                         StmtKind::If);
+            if (Status.isError() || Status.hasCodeCompletion()) {
+                // FIXME: better recovery
+                return makeParserResult<Stmt>(Status, nullptr);
+            }
+        }
+        
+        
+        // Before parsing the body, disable all of the bound variables so that they
+        // cannot be used unbound.
+        SmallVector<VarDecl *, 4> Vars;
+        for (auto &elt : Condition)
+            if (auto pattern = elt.getPatternOrNull())
+                pattern->collectVariables(Vars);
+        
+        llvm::SaveAndRestore<decltype(DisabledVars)>
+        RestoreCurVars(DisabledVars, Vars);
+        
+        llvm::SaveAndRestore<decltype(DisabledVarReason)>
+        RestoreReason(DisabledVarReason, diag::bound_var_guard_body);
+        
+        NormalBody = parseBraceItemList(diag::expected_lbrace_after_if);
+        if (NormalBody.isNull())
+            return nullptr; // FIXME: better recovery
+        
+        Status |= NormalBody;
+        
+        SmallVector<ASTNode, 16> Entries;
+        EmptyBody = makeParserResult(Status, BraceStmt::create(Context, UnlessLoc, Entries, UnlessLoc));
+    }
+    
+    return makeParserResult(
+                            Status, new (Context) IfStmt(LabelInfo,
+                                                         UnlessLoc, Condition, EmptyBody.get(),
+                                                         UnlessLoc, NormalBody.get()));
 }
 
 /// 
