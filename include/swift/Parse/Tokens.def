@@ -91,6 +91,7 @@ SIL_KEYWORD(sil_scope)
 // Statement keywords.
 STMT_KEYWORD(defer)
 STMT_KEYWORD(if)
+STMT_KEYWORD(unless)
 STMT_KEYWORD(guard)
 STMT_KEYWORD(do)
 STMT_KEYWORD(repeat)
